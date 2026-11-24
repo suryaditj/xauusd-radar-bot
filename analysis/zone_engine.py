@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from config.settings import (
     PIP_SIZE,
-    LOOKBACK_CANDLES,
+    LOOKBACK_BY_TF,
     SNR_PROXIMITY_PIPS,
     FVG_MIN_ATR_MULT,
     MODE_PROFILES,
@@ -20,10 +20,10 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return true_range.ewm(alpha=1 / period, adjust=False).mean()
 
 
-def _prepare_window(df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_window(df: pd.DataFrame, tf_name: str) -> pd.DataFrame:
     """
     Menghitung indikator pada seluruh riwayat data (220 candle) agar EMA 200 stabil,
-    lalu memotong jendela analisa menjadi tepat 120 candle tertutup + 1 candle berjalan.
+    lalu memotong jendela analisa sesuai batas lookback masing-masing timeframe.
     """
     data = df.copy().reset_index(drop=True)
     data["ema50"] = data["close"].ewm(span=50, adjust=False).mean()
@@ -33,7 +33,8 @@ def _prepare_window(df: pd.DataFrame) -> pd.DataFrame:
     data["body"] = (data["close"] - data["open"]).abs()
     data["body_ratio"] = np.where(data["range"] > 0, data["body"] / data["range"], 0.0)
 
-    slice_len = LOOKBACK_CANDLES + 1
+    lookback = LOOKBACK_BY_TF.get(tf_name, 72)
+    slice_len = lookback + 1
     if len(data) > slice_len:
         data = data.iloc[-slice_len:].reset_index(drop=True)
     return data
@@ -42,7 +43,7 @@ def _prepare_window(df: pd.DataFrame) -> pd.DataFrame:
 def detect_snr_levels(window: pd.DataFrame, fractal_span: int = 3) -> list[dict]:
     """
     Mendeteksi level Support & Resistance (Swing High / Swing Low)
-    di dalam batas 120 candle tertutup.
+    di dalam jendela lookback timeframe terkait.
     """
     closed_len = len(window) - 1
     if closed_len < (fractal_span * 2 + 1):
@@ -171,7 +172,7 @@ def detect_unbroken_fvgs(
     snr_levels: list[dict],
 ) -> list[dict]:
     """
-    Memindai seluruh FVG (Fair Value Gap) dalam 120 candle terakhir
+    Memindai seluruh FVG (Fair Value Gap) dalam batas lookback timeframe
     yang belum terkena breakout candle dan belum terisi penuh.
     """
     closed_len = len(window) - 1
@@ -242,7 +243,7 @@ def detect_snd_zones(
     max_base_candles: int = 3,
 ) -> list[dict]:
     """
-    Mendeteksi zona Supply & Demand dalam 120 candle terakhir yang belum kena
+    Mendeteksi zona Supply & Demand dalam batas lookback timeframe yang belum kena
     breakout candle, serta memeriksa kedekatannya dengan SNR (maks 20 pips) dan FVG.
     """
     closed_len = len(window) - 1
@@ -299,7 +300,6 @@ def detect_snd_zones(
 
             has_snr, snr_price = _check_snr_confluence(zone_type, proximal, distal, snr_levels)
 
-            # Cek apakah ada FVG unbroken yang bertumpuk atau menempel pada SND ini
             pad = 15.0 * PIP_SIZE
             z_low = min(proximal, distal) - pad
             z_high = max(proximal, distal) + pad
@@ -381,11 +381,13 @@ def check_ltf_confirmation(
     distal: float,
     current_price: float,
 ) -> bool:
-    if len(confirm_window) < 5:
+    if len(confirm_window) < 6:
         return False
 
     recent = confirm_window.iloc[-4:-1]
+    prev_closed = confirm_window.iloc[-3]
     last_closed = confirm_window.iloc[-2]
+
     candle_range = float(last_closed["high"]) - float(last_closed["low"])
     if candle_range <= 0:
         return False
@@ -393,29 +395,24 @@ def check_ltf_confirmation(
     if zone_type == "DEMAND":
         in_or_near_zone = distal <= current_price <= proximal + (3 * PIP_SIZE)
         touched_zone = (float(recent["low"].min()) <= proximal) and (float(recent["low"].min()) >= distal)
+        bullish_engulf = float(last_closed["close"]) > float(prev_closed["high"])
         lower_wick = min(float(last_closed["open"]), float(last_closed["close"])) - float(last_closed["low"])
-        bullish_reaction = (float(last_closed["close"]) > float(last_closed["open"])) or (
-            lower_wick / candle_range >= 0.50
+        strong_rejection = (float(last_closed["close"]) > float(last_closed["open"])) and (
+            lower_wick / candle_range >= 0.55
         )
-        return in_or_near_zone and touched_zone and bullish_reaction
+        return in_or_near_zone and touched_zone and (bullish_engulf or strong_rejection)
     else:
         in_or_near_zone = proximal - (3 * PIP_SIZE) <= current_price <= distal
         touched_zone = (float(recent["high"].max()) >= proximal) and (float(recent["high"].max()) <= distal)
+        bearish_engulf = float(last_closed["close"]) < float(prev_closed["low"])
         upper_wick = float(last_closed["high"]) - max(float(last_closed["open"]), float(last_closed["close"]))
-        bearish_reaction = (float(last_closed["close"]) < float(last_closed["open"])) or (
-            upper_wick / candle_range >= 0.50
+        strong_rejection = (float(last_closed["close"]) < float(last_closed["open"])) and (
+            upper_wick / candle_range >= 0.55
         )
-        return in_or_near_zone and touched_zone and bearish_reaction
+        return in_or_near_zone and touched_zone and (bearish_engulf or strong_rejection)
 
 
 def _compute_confluence_score(zone: dict) -> int:
-    """
-    Memberikan bobot prioritas zona:
-    - SND + SNR + FVG = 4
-    - SND + SNR       = 3
-    - SND + FVG       = 2
-    - SND murni / FVG = 1
-    """
     score = 1
     if zone["kind"] == "SND":
         if zone.get("has_snr_confluence"):
@@ -434,6 +431,7 @@ def evaluate_zone_setup(
     profile: dict,
     confirm_window: pd.DataFrame,
     all_zones: list[dict],
+    htf_trend: str,
 ) -> dict | None:
     if zone["status"] not in ("FRESH", "MITIGATED_1X"):
         return None
@@ -442,6 +440,14 @@ def evaluate_zone_setup(
     proximal = zone["proximal"]
     distal = zone["distal"]
     max_dist_pips = profile["max_dist_pips"]
+
+    # Blokir zona bekas (MITIGATED_1X) jika posisi melawan tren utama (Counter-Trend)
+    is_counter_trend = (
+        (zone_type == "DEMAND" and "BEARISH" in htf_trend)
+        or (zone_type == "SUPPLY" and "BULLISH" in htf_trend)
+    )
+    if is_counter_trend and zone["status"] != "FRESH":
+        return None
 
     is_confirmed = check_ltf_confirmation(confirm_window, zone_type, proximal, distal, current_price)
 
@@ -458,7 +464,6 @@ def evaluate_zone_setup(
         if not (MIN_DIST_PIPS <= dist_pips <= max_dist_pips):
             return None
 
-        # Deep Limit 50% (titik tengah zona/FVG) untuk meredam fakeout di bibir area
         limit_price = round((proximal + distal) / 2.0, 2)
 
     buffer_pips = profile["buffer_pips"]
@@ -470,7 +475,6 @@ def evaluate_zone_setup(
     if struct_sl_pips > profile["max_sl_pips"]:
         return None
 
-    # Jaga agar SL Minim minimal memenuhi batas bawah mode (tanpa membuang FVG sempit yang valid)
     effective_min_pips = max(struct_sl_pips, profile["min_sl_pips"])
     sl_min = round(limit_price - direction * (effective_min_pips * PIP_SIZE), 2)
 
@@ -479,7 +483,6 @@ def evaluate_zone_setup(
     clamped_max_pips = min(raw_max_pips, profile["max_sl_pips"])
     sl_max = round(limit_price - direction * (clamped_max_pips * PIP_SIZE), 2)
 
-    # Susun TP 1 (Swing Liquidity), TP 2 & TP 3 (Zona Lawan / Proyeksi Bertingkat)
     recent_slice = confirm_window.iloc[-45:-1]
     if zone_type == "DEMAND":
         swing_candidates = recent_slice[
@@ -596,7 +599,7 @@ def _build_dynamic_notes(
         alasan_parts.append(f"berimpit dengan SNR di {zone['snr_price']:.2f} (konfluensi kuat)")
     if zone["kind"] == "SND" and zone.get("has_fvg_confluence"):
         alasan_parts.append("didukung FVG unbroken")
-    if "BOS" in active_info.get("bos", ""):
+    if active_info.get("bos", "").startswith("BOS "):
         alasan_parts.append(f"terkonfirmasi {active_info['bos']}")
 
     alasan_entry = f"Menunggu {arah_teks} pada {', '.join(alasan_parts)}."
@@ -631,7 +634,7 @@ def run_full_analysis(mode: str) -> str:
     tf_order = profile["timeframes"]
 
     dataset = fetch_mode_dataset(tf_order)
-    windows: dict[str, pd.DataFrame] = {tf: _prepare_window(dataset[tf]) for tf in tf_order}
+    windows: dict[str, pd.DataFrame] = {tf: _prepare_window(dataset[tf], tf) for tf in tf_order}
     current_price = float(windows[tf_order[-1]]["close"].iloc[-1])
 
     tf_summaries: dict[str, dict] = {}
@@ -648,24 +651,21 @@ def run_full_analysis(mode: str) -> str:
         all_zones.extend(fvg_zones)
 
     confirm_window = windows[profile["confirm_tf"]]
+    htf_trend = tf_summaries.get(profile["trend_tf"], {}).get("trend", "SIDEWAYS ⚪")
     selected_setup = None
     selected_tf = None
 
-    # Cascade pemindaian dari TF lebih besar ke TF lebih kecil
     for tf in profile["zone_tfs"]:
         tf_zones = [z for z in all_zones if z["tf"] == tf]
         valid_candidates = []
         for z in tf_zones:
-            evaluated = evaluate_zone_setup(z, current_price, profile, confirm_window, all_zones)
+            evaluated = evaluate_zone_setup(
+                z, current_price, profile, confirm_window, all_zones, htf_trend
+            )
             if evaluated is not None:
                 valid_candidates.append(evaluated)
 
         if valid_candidates:
-            # Urutan prioritas:
-            # 1. Sinyal terkonfirmasi LTF
-            # 2. Skor konfluensi tertinggi (SND+SNR+FVG > SND+SNR > SND+FVG > SND/FVG tunggal)
-            # 3. Status FRESH di atas MITIGATED_1X
-            # 4. Jarak terdekat ke harga berjalan
             valid_candidates.sort(
                 key=lambda item: (
                     not item["is_confirmed"],
