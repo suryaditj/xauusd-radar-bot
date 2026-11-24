@@ -685,8 +685,16 @@ def run_full_analysis(mode: str) -> str:
             selected_tf = tf
             break
 
-    if selected_setup is None or selected_tf is None:
-        return format_no_zone_message(mode_label, tf_order, current_price, tf_summaries)
+        if selected_setup is None or selected_tf is None:
+        return format_no_zone_message(
+            mode_label,
+            tf_order,
+            current_price,
+            tf_summaries,
+            min_dist_pips=profile.get("min_dist_pips", MIN_DIST_PIPS),
+            max_dist_pips=profile["max_dist_pips"],
+            max_sl_pips=profile["max_sl_pips"],
+        )
 
     alasan_entry, waspadai = _build_dynamic_notes(
         trend_tf=profile["trend_tf"],
