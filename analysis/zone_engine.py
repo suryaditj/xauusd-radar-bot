@@ -453,7 +453,6 @@ def evaluate_zone_setup(
         if not (min_dist_pips <= dist_pips <= max_dist_pips):
             return None
 
-        # Pada Quick Scalp saat pullback, gunakan entry lebih dekat ke bibir/75% area agar tidak tertinggal pantulan
         if is_quick_scalp:
             limit_price = round((proximal * 0.75) + (distal * 0.25), 2)
         else:
@@ -685,7 +684,7 @@ def run_full_analysis(mode: str) -> str:
             selected_tf = tf
             break
 
-        if selected_setup is None or selected_tf is None:
+    if selected_setup is None or selected_tf is None:
         return format_no_zone_message(
             mode_label,
             tf_order,
