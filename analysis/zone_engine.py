@@ -351,6 +351,7 @@ def check_ltf_confirmation(
     proximal: float,
     distal: float,
     current_price: float,
+    is_quick_scalp: bool = False,
 ) -> bool:
     if len(confirm_window) < 6:
         return False
@@ -363,22 +364,29 @@ def check_ltf_confirmation(
     if candle_range <= 0:
         return False
 
+    near_pad = (6 * PIP_SIZE) if is_quick_scalp else (3 * PIP_SIZE)
+    wick_thresh = 0.45 if is_quick_scalp else 0.55
+
     if zone_type == "DEMAND":
-        in_or_near_zone = distal <= current_price <= proximal + (3 * PIP_SIZE)
-        touched_zone = (float(recent["low"].min()) <= proximal) and (float(recent["low"].min()) >= distal)
+        in_or_near_zone = distal <= current_price <= proximal + near_pad
+        touched_zone = (float(recent["low"].min()) <= proximal + near_pad) and (
+            float(recent["low"].min()) >= distal - (2 * PIP_SIZE)
+        )
         bullish_engulf = float(last_closed["close"]) > float(prev_closed["high"])
         lower_wick = min(float(last_closed["open"]), float(last_closed["close"])) - float(last_closed["low"])
         strong_rejection = (float(last_closed["close"]) > float(last_closed["open"])) and (
-            lower_wick / candle_range >= 0.55
+            lower_wick / candle_range >= wick_thresh
         )
         return in_or_near_zone and touched_zone and (bullish_engulf or strong_rejection)
     else:
-        in_or_near_zone = proximal - (3 * PIP_SIZE) <= current_price <= distal
-        touched_zone = (float(recent["high"].max()) >= proximal) and (float(recent["high"].max()) <= distal)
+        in_or_near_zone = proximal - near_pad <= current_price <= distal
+        touched_zone = (float(recent["high"].max()) >= proximal - near_pad) and (
+            float(recent["high"].max()) <= distal + (2 * PIP_SIZE)
+        )
         bearish_engulf = float(last_closed["close"]) < float(prev_closed["low"])
         upper_wick = float(last_closed["high"]) - max(float(last_closed["open"]), float(last_closed["close"]))
         strong_rejection = (float(last_closed["close"]) < float(last_closed["open"])) and (
-            upper_wick / candle_range >= 0.55
+            upper_wick / candle_range >= wick_thresh
         )
         return in_or_near_zone and touched_zone and (bearish_engulf or strong_rejection)
 
@@ -412,6 +420,7 @@ def evaluate_zone_setup(
     distal = zone["distal"]
     min_dist_pips = profile.get("min_dist_pips", MIN_DIST_PIPS)
     max_dist_pips = profile["max_dist_pips"]
+    is_quick_scalp = profile.get("is_quick_scalp", False)
 
     is_counter_trend = (
         (zone_type == "DEMAND" and "BEARISH" in htf_trend)
@@ -422,7 +431,14 @@ def evaluate_zone_setup(
     if is_counter_trend and zone["status"] != "FRESH":
         return None
 
-    is_confirmed = check_ltf_confirmation(confirm_window, zone_type, proximal, distal, current_price)
+    is_confirmed = check_ltf_confirmation(
+        confirm_window,
+        zone_type,
+        proximal,
+        distal,
+        current_price,
+        is_quick_scalp=is_quick_scalp,
+    )
 
     if is_confirmed:
         limit_price = round(current_price, 2)
@@ -437,7 +453,11 @@ def evaluate_zone_setup(
         if not (min_dist_pips <= dist_pips <= max_dist_pips):
             return None
 
-        limit_price = round((proximal + distal) / 2.0, 2)
+        # Pada Quick Scalp saat pullback, gunakan entry lebih dekat ke bibir/75% area agar tidak tertinggal pantulan
+        if is_quick_scalp:
+            limit_price = round((proximal * 0.75) + (distal * 0.25), 2)
+        else:
+            limit_price = round((proximal + distal) / 2.0, 2)
 
     buffer_pips = profile["buffer_pips"]
     direction = 1 if zone_type == "DEMAND" else -1
@@ -459,12 +479,13 @@ def evaluate_zone_setup(
     recent_slice = confirm_window.iloc[-45:-1]
     if zone_type == "DEMAND":
         swing_candidates = recent_slice[
-            recent_slice["high"] >= limit_price + (effective_min_pips * 1.2 * PIP_SIZE)
+            recent_slice["high"] >= limit_price + (effective_min_pips * 1.1 * PIP_SIZE)
         ]["high"]
+        default_tp1_pips = 30.0 if is_quick_scalp else (effective_min_pips * 1.5)
         tp1_price = (
             round(float(swing_candidates.min()), 2)
             if not swing_candidates.empty
-            else round(limit_price + (effective_min_pips * 1.5 * PIP_SIZE), 2)
+            else round(limit_price + (default_tp1_pips * PIP_SIZE), 2)
         )
         tp1_label = "Swing High"
 
@@ -473,18 +494,19 @@ def evaluate_zone_setup(
                 z for z in all_zones
                 if z["type"] == "SUPPLY"
                 and z["status"] in ("FRESH", "MITIGATED_1X")
-                and z["proximal"] > tp1_price + (10 * PIP_SIZE)
+                and z["proximal"] > tp1_price + (8 * PIP_SIZE)
             ],
             key=lambda item: item["proximal"],
         )
     else:
         swing_candidates = recent_slice[
-            recent_slice["low"] <= limit_price - (effective_min_pips * 1.2 * PIP_SIZE)
+            recent_slice["low"] <= limit_price - (effective_min_pips * 1.1 * PIP_SIZE)
         ]["low"]
+        default_tp1_pips = 30.0 if is_quick_scalp else (effective_min_pips * 1.5)
         tp1_price = (
             round(float(swing_candidates.max()), 2)
             if not swing_candidates.empty
-            else round(limit_price - (effective_min_pips * 1.5 * PIP_SIZE), 2)
+            else round(limit_price - (default_tp1_pips * PIP_SIZE), 2)
         )
         tp1_label = "Swing Low"
 
@@ -493,7 +515,7 @@ def evaluate_zone_setup(
                 z for z in all_zones
                 if z["type"] == "DEMAND"
                 and z["status"] in ("FRESH", "MITIGATED_1X")
-                and z["proximal"] < tp1_price - (10 * PIP_SIZE)
+                and z["proximal"] < tp1_price - (8 * PIP_SIZE)
             ],
             key=lambda item: item["proximal"],
             reverse=True,
@@ -501,11 +523,17 @@ def evaluate_zone_setup(
 
     tp1_pips = abs(tp1_price - limit_price) / PIP_SIZE
 
-    min_tp2_pips = max(effective_min_pips * 1.5, tp1_pips + 15.0)
+    if is_quick_scalp:
+        min_tp2_pips = max(40.0, tp1_pips + 10.0)
+        wall_guard_mult = 1.05
+    else:
+        min_tp2_pips = max(effective_min_pips * 1.5, tp1_pips + 15.0)
+        wall_guard_mult = 1.4
+
     if len(opposing) >= 1:
         wall_1 = opposing[0]
         wall_1_pips = abs(wall_1["proximal"] - limit_price) / PIP_SIZE
-        if wall_1_pips < (effective_min_pips * 1.4):
+        if wall_1_pips < (effective_min_pips * wall_guard_mult):
             return None
         if wall_1_pips >= min_tp2_pips:
             tp2_price = round(wall_1["proximal"], 2)
@@ -519,7 +547,8 @@ def evaluate_zone_setup(
 
     tp2_pips = abs(tp2_price - limit_price) / PIP_SIZE
 
-    min_tp3_pips = tp2_pips + max(15.0, effective_min_pips * 0.8)
+    step_tp3 = 12.0 if is_quick_scalp else max(15.0, effective_min_pips * 0.8)
+    min_tp3_pips = max(50.0 if is_quick_scalp else 0.0, tp2_pips + step_tp3)
     if len(opposing) >= 2:
         wall_2 = opposing[1]
         wall_2_pips = abs(wall_2["proximal"] - limit_price) / PIP_SIZE
