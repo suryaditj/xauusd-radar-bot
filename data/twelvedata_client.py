@@ -17,11 +17,7 @@ class TwelveDataError(Exception):
     pass
 
 
-def fetch_candles(
-    tf: str,
-    outputsize: int = 220,
-    cache_ttl: int = CACHE_TTL_SECONDS,
-) -> pd.DataFrame:
+def fetch_candles(tf: str, outputsize: int = 220, ttl_seconds: int = CACHE_TTL_SECONDS) -> pd.DataFrame:
     tf_upper = tf.upper()
     if tf_upper not in TF_TO_TWELVEDATA:
         raise ValueError(f"Timeframe tidak didukung: {tf}")
@@ -34,7 +30,7 @@ def fetch_candles(
 
     if cache_key in _CANDLE_CACHE:
         cached_time, cached_df = _CANDLE_CACHE[cache_key]
-        if (now - cached_time) < cache_ttl:
+        if (now - cached_time) < ttl_seconds:
             return cached_df.copy()
 
     params = {
@@ -74,13 +70,10 @@ def fetch_candles(
     return df.copy()
 
 
-def fetch_mode_dataset(
-    timeframes: list[str],
-    cache_ttl: int = CACHE_TTL_SECONDS,
-) -> dict[str, pd.DataFrame]:
+def fetch_mode_dataset(timeframes: list[str], ttl_seconds: int = CACHE_TTL_SECONDS) -> dict[str, pd.DataFrame]:
     dataset: dict[str, pd.DataFrame] = {}
     for idx, tf in enumerate(timeframes):
-        dataset[tf] = fetch_candles(tf, cache_ttl=cache_ttl)
+        dataset[tf] = fetch_candles(tf, ttl_seconds=ttl_seconds)
         if idx < len(timeframes) - 1:
-            time.sleep(0.4)
+            time.sleep(0.35)
     return dataset
