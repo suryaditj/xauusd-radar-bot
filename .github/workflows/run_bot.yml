@@ -1,0 +1,47 @@
+name: Bot Radar XAUUSD
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_minutes:
+        description: "Durasi sesi bot aktif (menit, maks 180)"
+        required: true
+        default: "60"
+        type: choice
+        options:
+          - "30"
+          - "60"
+          - "120"
+          - "180"
+
+concurrency:
+  group: xauusd-telegram-bot-polling
+  cancel-in-progress: true
+
+jobs:
+  run-radar-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 185
+
+    steps:
+      - name: Ambil Kode Repositori
+        uses: actions/checkout@v4
+
+      - name: Siapkan Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependensi
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Jalankan Sesi Bot Telegram
+        env:
+          PYTHONPATH: .
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          SESSION_DURATION_MINUTES: ${{ github.event.inputs.session_minutes }}
+        run: python main.py
