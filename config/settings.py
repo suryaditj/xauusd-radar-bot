@@ -15,8 +15,14 @@ TF_TO_TWELVEDATA = {
     "M5": "5min",
 }
 
-# Batas pembacaan struktur ke belakang (120 candle tertutup)
-LOOKBACK_CANDLES = 120
+# Batas pembacaan struktur ke belakang per timeframe agar tidak memungut zona usang
+LOOKBACK_BY_TF = {
+    "D1": 30,   # ~1.5 bulan
+    "H4": 45,   # ~7.5 hari perdagangan
+    "H1": 72,   # ~3 hari perdagangan
+    "M15": 96,  # ~24 jam
+    "M5": 120,  # ~10 jam
+}
 
 # Parameter konfluensi SND + SNR dan filter ukuran minimal FVG
 SNR_PROXIMITY_PIPS = 20.0
