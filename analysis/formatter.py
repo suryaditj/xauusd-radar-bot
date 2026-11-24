@@ -94,6 +94,9 @@ def format_no_zone_message(
     tf_order: list[str],
     current_price: float,
     tf_summaries: dict,
+    min_dist_pips: float = 15.0,
+    max_dist_pips: float = 200.0,
+    max_sl_pips: float = 90.0,
 ) -> str:
     trend_lines = []
     for tf in tf_order:
@@ -101,6 +104,7 @@ def format_no_zone_message(
         extra = f" | {info['fvg']}" if info.get("fvg") else ""
         trend_lines.append(f"• {tf:<3} : {info['trend']} | {info['bos']}{extra}")
 
+    dist_range_str = f"{int(min_dist_pips)}-{int(max_dist_pips)} pips"
     lines = [
         "⚪ XAUUSD — MULTI-TF RADAR & ZONA",
         f"Mode : {mode} ({' → '.join(tf_order)})",
@@ -112,7 +116,7 @@ def format_no_zone_message(
         f"🔎 Sumber Zona Aktif : Tidak ditemukan ({' / '.join(tf_order)})",
         "📢 STATUS : ⚪ WAIT — BELUM ADA ZONA VALID",
         "",
-        "💡 Alasan Entry : Belum ada zona Supply/Demand segar yang memenuhi koridor jarak (15-200 pips) dan batas SL.",
+        f"💡 Alasan Entry : Belum ada zona Supply/Demand/FVG segar dalam koridor {dist_range_str} dengan batas SL maks {int(max_sl_pips)} pips.",
         "",
         "⚠️ Waspadai : Jangan memaksakan entry di tengah area tanpa struktur; tunggu pembentukan base dan leg-out baru.",
         "",
