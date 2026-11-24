@@ -15,6 +15,14 @@ TF_TO_TWELVEDATA = {
     "M5": "5min",
 }
 
+# Batas pembacaan struktur ke belakang (120 candle tertutup)
+LOOKBACK_CANDLES = 120
+
+# Parameter konfluensi SND + SNR dan filter ukuran minimal FVG
+SNR_PROXIMITY_PIPS = 20.0
+FVG_MIN_ATR_MULT = 0.8
+
+# Konfigurasi dua mode analisa dengan koridor jarak 300 - 450 pips
 MODE_PROFILES = {
     "SCALPING": {
         "timeframes": ["H1", "M15", "M5"],
@@ -24,6 +32,7 @@ MODE_PROFILES = {
         "min_sl_pips": 35.0,
         "max_sl_pips": 90.0,
         "buffer_pips": 5.0,
+        "max_dist_pips": 300.0,
     },
     "INTRADAY": {
         "timeframes": ["D1", "H4", "M15"],
@@ -33,9 +42,10 @@ MODE_PROFILES = {
         "min_sl_pips": 70.0,
         "max_sl_pips": 180.0,
         "buffer_pips": 10.0,
+        "max_dist_pips": 450.0,
     },
 }
 
 CACHE_TTL_SECONDS = 45
 MIN_DIST_PIPS = 15.0
-MAX_DIST_PIPS = 200.0
+MAX_DIST_PIPS = 450.0
