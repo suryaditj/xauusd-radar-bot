@@ -695,7 +695,7 @@ def _build_dynamic_notes(
     tp2: tuple[str, float],
 ) -> tuple[str, str]:
     is_demand = zone["type"] == "DEMAND"
-    area = "beli" if is_demand else "jual"
+    area = "buy" if is_demand else "sell"
     htf_trend = tf_summaries.get(trend_tf, {}).get("trend", "SIDEWAYS ⚪")
 
     aksi = "memantul naik" if is_demand else "berbalik turun"
