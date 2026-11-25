@@ -437,9 +437,13 @@ def evaluate_zone_setup(
     zone_type = zone["type"]
     proximal = zone["proximal"]
     distal = zone["distal"]
-    min_dist_pips = profile.get("min_dist_pips", MIN_DIST_PIPS)
-    max_dist_pips = profile["max_dist_pips"]
+    min_dist_pips = profile.get("zone_scan_min_pips", profile.get("min_dist_pips", MIN_DIST_PIPS))
+    max_dist_pips = profile.get("zone_scan_max_pips", profile["max_dist_pips"])
     is_quick_scalp = profile.get("is_quick_scalp", False)
+
+    dist_pips = abs(current_price - proximal) / PIP_SIZE
+    if dist_pips > max_dist_pips:
+        return None
 
     is_counter_trend = (
         (zone_type == "DEMAND" and "BEARISH" in htf_trend)
@@ -476,7 +480,6 @@ def evaluate_zone_setup(
                 _record_rejection(rejected_out, zone, current_price, "Supply di bawah harga jalan")
             return None
 
-        dist_pips = abs(current_price - proximal) / PIP_SIZE
         if dist_pips < min_dist_pips:
             if rejected_out is not None:
                 _record_rejection(
@@ -484,15 +487,6 @@ def evaluate_zone_setup(
                     zone,
                     current_price,
                     f"jarak {dist_pips:.0f} pips < min {int(min_dist_pips)} pips",
-                )
-            return None
-        if dist_pips > max_dist_pips:
-            if rejected_out is not None:
-                _record_rejection(
-                    rejected_out,
-                    zone,
-                    current_price,
-                    f"jarak {dist_pips:.0f} pips > maks {int(max_dist_pips)} pips",
                 )
             return None
 
@@ -688,6 +682,8 @@ def run_full_analysis(mode: str) -> str:
     profile = MODE_PROFILES[mode_key]
     mode_label = profile.get("label", mode_key).upper()
     tf_order = profile["timeframes"]
+    zone_tf_set = set(profile["zone_tfs"])
+    scan_max_pips = profile.get("zone_scan_max_pips", profile["max_dist_pips"])
     ttl_seconds = profile.get("cache_ttl", 45)
     is_quick_scalp = profile.get("is_quick_scalp", False)
 
@@ -699,7 +695,7 @@ def run_full_analysis(mode: str) -> str:
     current_price = float(windows[tf_order[-1]]["close"].iloc[-1])
 
     tf_summaries: dict[str, dict] = {}
-    all_zones: list[dict] = []
+    mode_zones: list[dict] = []
 
     for tf in tf_order:
         win = windows[tf]
@@ -708,8 +704,12 @@ def run_full_analysis(mode: str) -> str:
         snd_zones = detect_snd_zones(win, tf, snr_levels, fvg_zones)
 
         tf_summaries[tf] = analyze_tf_context(win, fvg_zones)
-        all_zones.extend(snd_zones)
-        all_zones.extend(fvg_zones)
+
+        if tf in zone_tf_set:
+            for z in (*snd_zones, *fvg_zones):
+                dist_pips = abs(current_price - z["proximal"]) / PIP_SIZE
+                if dist_pips <= scan_max_pips:
+                    mode_zones.append(z)
 
     confirm_window = windows[profile["confirm_tf"]]
     htf_trend = tf_summaries.get(profile["trend_tf"], {}).get("trend", "SIDEWAYS ⚪")
@@ -718,7 +718,7 @@ def run_full_analysis(mode: str) -> str:
     rejected_zones: list[dict] = []
 
     for tf in profile["zone_tfs"]:
-        tf_zones = [z for z in all_zones if z["tf"] == tf]
+        tf_zones = [z for z in mode_zones if z["tf"] == tf]
         valid_candidates = []
         for z in tf_zones:
             evaluated = evaluate_zone_setup(
@@ -726,7 +726,7 @@ def run_full_analysis(mode: str) -> str:
                 current_price,
                 profile,
                 confirm_window,
-                all_zones,
+                mode_zones,
                 htf_trend,
                 rejected_out=rejected_zones,
             )
@@ -766,8 +766,8 @@ def run_full_analysis(mode: str) -> str:
             tf_order,
             current_price,
             tf_summaries,
-            min_dist_pips=profile.get("min_dist_pips", MIN_DIST_PIPS),
-            max_dist_pips=profile["max_dist_pips"],
+            min_dist_pips=profile.get("zone_scan_min_pips", profile.get("min_dist_pips", MIN_DIST_PIPS)),
+            max_dist_pips=scan_max_pips,
             max_sl_pips=profile["max_sl_pips"],
             nearest_reject=nearest_reject,
         )
