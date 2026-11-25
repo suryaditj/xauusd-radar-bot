@@ -8,7 +8,7 @@ from config.settings import (
     MODE_PROFILES,
     MIN_DIST_PIPS,
 )
-from data.forexcom_client import fetch_mode_dataset
+from data.twelvedata_client import fetch_mode_dataset
 from analysis.formatter import format_locked_radar_message, format_no_zone_message
 
 DEFAULT_REF_SL_PIPS = 100.0
