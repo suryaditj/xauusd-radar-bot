@@ -465,9 +465,13 @@ def check_ltf_confirmation(
 
     near_pad = (6 * PIP_SIZE) if is_quick_scalp else (3 * PIP_SIZE)
     wick_thresh = 0.45 if is_quick_scalp else 0.55
+    max_depth = min(0.3 * abs(distal - proximal), 15 * PIP_SIZE)
 
     if zone_type == "DEMAND":
-        in_or_near_zone = distal <= current_price <= proximal + near_pad
+        in_or_near_zone = (
+            distal <= current_price <= proximal + near_pad
+            and current_price >= proximal - max_depth
+        )
         touched_zone = (float(recent["low"].min()) <= proximal + near_pad) and (
             float(recent["low"].min()) >= distal - (2 * PIP_SIZE)
         )
@@ -476,9 +480,13 @@ def check_ltf_confirmation(
         strong_rejection = (float(last_closed["close"]) > float(last_closed["open"])) and (
             lower_wick / candle_range >= wick_thresh
         )
-        return in_or_near_zone and touched_zone and (bullish_engulf or strong_rejection)
+        bullish_close = float(last_closed["close"]) > float(last_closed["open"])
+        return in_or_near_zone and touched_zone and (bullish_engulf or strong_rejection or bullish_close)
     else:
-        in_or_near_zone = proximal - near_pad <= current_price <= distal
+        in_or_near_zone = (
+            proximal - near_pad <= current_price <= distal
+            and current_price <= proximal + max_depth
+        )
         touched_zone = (float(recent["high"].max()) >= proximal - near_pad) and (
             float(recent["high"].max()) <= distal + (2 * PIP_SIZE)
         )
@@ -487,7 +495,8 @@ def check_ltf_confirmation(
         strong_rejection = (float(last_closed["close"]) < float(last_closed["open"])) and (
             upper_wick / candle_range >= wick_thresh
         )
-        return in_or_near_zone and touched_zone and (bearish_engulf or strong_rejection)
+        bearish_close = float(last_closed["close"]) < float(last_closed["open"])
+        return in_or_near_zone and touched_zone and (bearish_engulf or strong_rejection or bearish_close)
 
 
 def _compute_confluence_score(zone: dict) -> int:
