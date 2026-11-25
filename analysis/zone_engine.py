@@ -404,6 +404,24 @@ def _compute_confluence_score(zone: dict) -> int:
     return score
 
 
+def _record_rejection(
+    rejected_list: list[dict],
+    zone: dict,
+    current_price: float,
+    reason: str,
+) -> None:
+    dist_pips = round(abs(current_price - zone["proximal"]) / PIP_SIZE, 1)
+    rejected_list.append({
+        "tf": zone["tf"],
+        "type": zone["type"],
+        "pattern": zone["pattern"],
+        "status": zone["status"],
+        "proximal": zone["proximal"],
+        "dist_pips": dist_pips,
+        "reason": reason,
+    })
+
+
 def evaluate_zone_setup(
     zone: dict,
     current_price: float,
@@ -411,6 +429,7 @@ def evaluate_zone_setup(
     confirm_window: pd.DataFrame,
     all_zones: list[dict],
     htf_trend: str,
+    rejected_out: list[dict] | None = None,
 ) -> dict | None:
     if zone["status"] not in ("FRESH", "MITIGATED_1X"):
         return None
@@ -427,8 +446,12 @@ def evaluate_zone_setup(
         or (zone_type == "SUPPLY" and "BULLISH" in htf_trend)
     )
     if profile.get("strict_trend", False) and is_counter_trend:
+        if rejected_out is not None:
+            _record_rejection(rejected_out, zone, current_price, "lawan tren (strict_trend)")
         return None
     if is_counter_trend and zone["status"] != "FRESH":
+        if rejected_out is not None:
+            _record_rejection(rejected_out, zone, current_price, f"lawan tren & status {zone['status']}")
         return None
 
     is_confirmed = check_ltf_confirmation(
@@ -445,12 +468,32 @@ def evaluate_zone_setup(
         dist_pips = 0.0
     else:
         if zone_type == "DEMAND" and proximal >= current_price:
+            if rejected_out is not None:
+                _record_rejection(rejected_out, zone, current_price, "Demand di atas harga jalan")
             return None
         if zone_type == "SUPPLY" and proximal <= current_price:
+            if rejected_out is not None:
+                _record_rejection(rejected_out, zone, current_price, "Supply di bawah harga jalan")
             return None
 
         dist_pips = abs(current_price - proximal) / PIP_SIZE
-        if not (min_dist_pips <= dist_pips <= max_dist_pips):
+        if dist_pips < min_dist_pips:
+            if rejected_out is not None:
+                _record_rejection(
+                    rejected_out,
+                    zone,
+                    current_price,
+                    f"jarak {dist_pips:.0f} pips < min {int(min_dist_pips)} pips",
+                )
+            return None
+        if dist_pips > max_dist_pips:
+            if rejected_out is not None:
+                _record_rejection(
+                    rejected_out,
+                    zone,
+                    current_price,
+                    f"jarak {dist_pips:.0f} pips > maks {int(max_dist_pips)} pips",
+                )
             return None
 
         if is_quick_scalp:
@@ -465,6 +508,13 @@ def evaluate_zone_setup(
     struct_sl_pips = round(abs(limit_price - struct_sl) / PIP_SIZE, 1)
 
     if struct_sl_pips > profile["max_sl_pips"]:
+        if rejected_out is not None:
+            _record_rejection(
+                rejected_out,
+                zone,
+                current_price,
+                f"SL {struct_sl_pips:.0f} pips > maks {int(profile['max_sl_pips'])} pips",
+            )
         return None
 
     effective_min_pips = max(struct_sl_pips, profile["min_sl_pips"])
@@ -533,6 +583,13 @@ def evaluate_zone_setup(
         wall_1 = opposing[0]
         wall_1_pips = abs(wall_1["proximal"] - limit_price) / PIP_SIZE
         if wall_1_pips < (effective_min_pips * wall_guard_mult):
+            if rejected_out is not None:
+                _record_rejection(
+                    rejected_out,
+                    zone,
+                    current_price,
+                    f"terhalang zona lawan ({wall_1_pips:.0f} pips)",
+                )
             return None
         if wall_1_pips >= min_tp2_pips:
             tp2_price = round(wall_1["proximal"], 2)
@@ -660,13 +717,20 @@ def run_full_analysis(mode: str) -> str:
     htf_trend = tf_summaries.get(profile["trend_tf"], {}).get("trend", "SIDEWAYS ⚪")
     selected_setup = None
     selected_tf = None
+    rejected_zones: list[dict] = []
 
     for tf in profile["zone_tfs"]:
         tf_zones = [z for z in all_zones if z["tf"] == tf]
         valid_candidates = []
         for z in tf_zones:
             evaluated = evaluate_zone_setup(
-                z, current_price, profile, confirm_window, all_zones, htf_trend
+                z,
+                current_price,
+                profile,
+                confirm_window,
+                all_zones,
+                htf_trend,
+                rejected_out=rejected_zones,
             )
             if evaluated is not None:
                 valid_candidates.append(evaluated)
@@ -685,6 +749,10 @@ def run_full_analysis(mode: str) -> str:
             break
 
     if selected_setup is None or selected_tf is None:
+        nearest_reject = None
+        if rejected_zones:
+            rejected_zones.sort(key=lambda item: item["dist_pips"])
+            nearest_reject = rejected_zones[0]
         return format_no_zone_message(
             mode_label,
             tf_order,
@@ -693,6 +761,7 @@ def run_full_analysis(mode: str) -> str:
             min_dist_pips=profile.get("min_dist_pips", MIN_DIST_PIPS),
             max_dist_pips=profile["max_dist_pips"],
             max_sl_pips=profile["max_sl_pips"],
+            nearest_reject=nearest_reject,
         )
 
     alasan_entry, waspadai = _build_dynamic_notes(
