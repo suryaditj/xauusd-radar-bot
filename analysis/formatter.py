@@ -9,9 +9,9 @@ PATTERN_TEXT = {
     "RBR": "[RBR] lanjut naik",
     "DBR": "[DBR] berbalik naik",
     "DBD": "[DBD] lanjut turun",
-    "RBD": "[RDB] berbalik turun",
+    "RBD": "[RBD] berbalik turun",
     "FVG": "[FVG] celah harga",
-    "V-REV": "pembalikan tajam",
+    "V-REV": "[V-REV] pembalikan tajam",
 }
 
 STATUS_TEXT = {
@@ -34,10 +34,10 @@ def _trend_text(trend: str) -> str:
 
 def _bos_text(bos: str) -> str:
     if "Bullish" in bos:
-        return "Bullish, tembus ke atas"
+        return "tembus ke atas"
     if "Bearish" in bos:
-        return "Bearish, tembus ke bawah"
-    return "Sideways, belum ada tembusan"
+        return "tembus ke bawah"
+    return "belum ada tembusan"
 
 
 def _fvg_text(fvg: str) -> str:
@@ -56,7 +56,7 @@ def _fvg_text(fvg: str) -> str:
 def _trend_lines(tf_order: list[str], tf_summaries: dict) -> list[str]:
     lines = []
     for tf in tf_order:
-        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ↔️", "bos": "", "fvg": ""})
+        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ⚪", "bos": "", "fvg": ""})
         parts = [_trend_text(info["trend"]), _bos_text(info.get("bos", ""))]
         fvg = _fvg_text(info.get("fvg", ""))
         if fvg:
@@ -66,7 +66,7 @@ def _trend_lines(tf_order: list[str], tf_summaries: dict) -> list[str]:
 
 
 def _zone_text(zone: dict) -> str:
-    area = "Area beli" if zone["type"] == "DEMAND" else "Area jual"
+    area = "Area buy" if zone["type"] == "DEMAND" else "Area sell"
     pola = PATTERN_TEXT.get(zone["pattern"], zone["pattern"])
     status = STATUS_TEXT.get(zone["status"], zone["status"])
     return f"{area}, {pola} ({status})"
@@ -78,9 +78,9 @@ def _simple_reason(reason: str) -> str:
     if reason.startswith("jarak") and "<" in reason:
         return "terlalu dekat dengan harga"
     if reason.startswith("Demand di atas"):
-        return "area beli sudah ada di atas harga"
+        return "area buy sudah ada di atas harga"
     if reason.startswith("Supply sudah"):
-        return "area jual sudah dilewati harga"
+        return "area sell sudah dilewati harga"
     if reason.startswith("lawan tren"):
         return "melawan arah tren"
     return reason
@@ -138,7 +138,7 @@ def format_locked_radar_message(
         "🧭 ARAH MARKET",
         *_trend_lines(tf_order, tf_summaries),
         LINE,
-        f"📢 SINYAL : {status_text}",
+        f"📢 Status : {status_text}",
         f"🔎 Zona dari : {active_tf}",
         f"📦 Jenis : {_zone_text(zone)}",
         "",
@@ -174,7 +174,7 @@ def format_no_zone_message(
         f"dari harga untuk mode {mode.title()}."
     )
     if nearest_reject is not None:
-        area = "Area BUY" if nearest_reject["type"] == "DEMAND" else "Area SELL"
+        area = "Area buy" if nearest_reject["type"] == "DEMAND" else "Area sell"
         pola = PATTERN_TEXT.get(nearest_reject["pattern"], nearest_reject["pattern"])
         alasan += (
             f"\nZona terdekat: {area} {pola} ({nearest_reject['tf']}) di "
@@ -183,14 +183,14 @@ def format_no_zone_message(
         )
 
     lines = [
-        "🪙 XAUUSD — RADAR ZONA",
+        "🪙 XAUUSD — ANALISA ZONA",
         f"⚡ Mode : {mode.title()} ({' → '.join(tf_order)})",
         f"💰 Harga sekarang : {current_price:.2f}",
         LINE,
         "🧭 ARAH MARKET",
         *_trend_lines(tf_order, tf_summaries),
         LINE,
-        "📢 Status : 🟡 TUNGGU — belum ada zona yang cocok",
+        "📢 Status : 🟡 WAIT — belum ada zona yang cocok",
         "",
         "💡 ALASAN",
         alasan,
