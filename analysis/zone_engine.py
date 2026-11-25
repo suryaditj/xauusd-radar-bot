@@ -8,8 +8,10 @@ from config.settings import (
     MODE_PROFILES,
     MIN_DIST_PIPS,
 )
-from data.twelvedata_client import fetch_mode_dataset
+from data.forexcom_client import fetch_mode_dataset
 from analysis.formatter import format_locked_radar_message, format_no_zone_message
+
+DEFAULT_REF_SL_PIPS = 100.0
 
 
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -492,36 +494,27 @@ def evaluate_zone_setup(
 
         limit_price = round((proximal + distal) / 2.0, 2)
 
-    buffer_pips = profile["buffer_pips"]
+    # Angka SL hanya sebagai estimasi acuan (misalnya maks ~100 pips), tidak menggugurkan setup
+    buffer_pips = float(profile.get("buffer_pips", 5.0))
+    ref_max_sl_pips = float(profile.get("max_sl_pips", DEFAULT_REF_SL_PIPS))
+    ref_min_sl_pips = min(float(profile.get("min_sl_pips", 30.0)), ref_max_sl_pips)
     direction = 1 if zone_type == "DEMAND" else -1
 
     struct_sl = distal - direction * (buffer_pips * PIP_SIZE)
     struct_sl_pips = round(abs(limit_price - struct_sl) / PIP_SIZE, 1)
 
-    if struct_sl_pips > profile["max_sl_pips"]:
-        if rejected_out is not None:
-            _record_rejection(
-                rejected_out,
-                zone,
-                current_price,
-                f"SL {struct_sl_pips:.0f} pips > maks {int(profile['max_sl_pips'])} pips",
-            )
-        return None
+    est_min_pips = min(max(struct_sl_pips, ref_min_sl_pips), ref_max_sl_pips)
+    est_max_pips = min(max(est_min_pips + 10.0, min(struct_sl_pips, ref_max_sl_pips)), ref_max_sl_pips)
 
-    effective_min_pips = max(struct_sl_pips, profile["min_sl_pips"])
-    sl_min = round(limit_price - direction * (effective_min_pips * PIP_SIZE), 2)
-
-    extra_buffer_pips = round(buffer_pips * 2.5, 1)
-    raw_max_pips = max(effective_min_pips + 5.0, struct_sl_pips + extra_buffer_pips)
-    clamped_max_pips = min(raw_max_pips, profile["max_sl_pips"])
-    sl_max = round(limit_price - direction * (clamped_max_pips * PIP_SIZE), 2)
+    sl_min = round(limit_price - direction * (est_min_pips * PIP_SIZE), 2)
+    sl_max = round(limit_price - direction * (est_max_pips * PIP_SIZE), 2)
 
     recent_slice = confirm_window.iloc[-45:-1]
     if zone_type == "DEMAND":
         swing_candidates = recent_slice[
-            recent_slice["high"] >= limit_price + (effective_min_pips * 1.1 * PIP_SIZE)
+            recent_slice["high"] >= limit_price + (est_min_pips * 1.1 * PIP_SIZE)
         ]["high"]
-        default_tp1_pips = 30.0 if is_quick_scalp else (effective_min_pips * 1.5)
+        default_tp1_pips = 30.0 if is_quick_scalp else (est_min_pips * 1.5)
         tp1_price = (
             round(float(swing_candidates.min()), 2)
             if not swing_candidates.empty
@@ -540,9 +533,9 @@ def evaluate_zone_setup(
         )
     else:
         swing_candidates = recent_slice[
-            recent_slice["low"] <= limit_price - (effective_min_pips * 1.1 * PIP_SIZE)
+            recent_slice["low"] <= limit_price - (est_min_pips * 1.1 * PIP_SIZE)
         ]["low"]
-        default_tp1_pips = 30.0 if is_quick_scalp else (effective_min_pips * 1.5)
+        default_tp1_pips = 30.0 if is_quick_scalp else (est_min_pips * 1.5)
         tp1_price = (
             round(float(swing_candidates.max()), 2)
             if not swing_candidates.empty
@@ -563,25 +556,10 @@ def evaluate_zone_setup(
 
     tp1_pips = abs(tp1_price - limit_price) / PIP_SIZE
 
-    if is_quick_scalp:
-        min_tp2_pips = max(40.0, tp1_pips + 10.0)
-        wall_guard_mult = 1.05
-    else:
-        min_tp2_pips = max(effective_min_pips * 1.5, tp1_pips + 15.0)
-        wall_guard_mult = 1.4
-
+    min_tp2_pips = max(40.0 if is_quick_scalp else est_min_pips * 1.5, tp1_pips + 10.0)
     if len(opposing) >= 1:
         wall_1 = opposing[0]
         wall_1_pips = abs(wall_1["proximal"] - limit_price) / PIP_SIZE
-        if wall_1_pips < (effective_min_pips * wall_guard_mult):
-            if rejected_out is not None:
-                _record_rejection(
-                    rejected_out,
-                    zone,
-                    current_price,
-                    f"terhalang zona lawan ({wall_1_pips:.0f} pips)",
-                )
-            return None
         if wall_1_pips >= min_tp2_pips:
             tp2_price = round(wall_1["proximal"], 2)
             tp2_label = f"{wall_1['type'].title()} {wall_1['pattern']}"
@@ -594,7 +572,7 @@ def evaluate_zone_setup(
 
     tp2_pips = abs(tp2_price - limit_price) / PIP_SIZE
 
-    step_tp3 = 12.0 if is_quick_scalp else max(15.0, effective_min_pips * 0.8)
+    step_tp3 = 12.0 if is_quick_scalp else max(15.0, est_min_pips * 0.8)
     min_tp3_pips = max(50.0 if is_quick_scalp else 0.0, tp2_pips + step_tp3)
     if len(opposing) >= 2:
         wall_2 = opposing[1]
@@ -653,23 +631,25 @@ def _build_dynamic_notes(
 
     alasan_entry = f"Menunggu {arah_teks} pada {', '.join(alasan_parts)}."
 
-    waspada_list = []
+    waspada_list = [
+        "angka SL hanya acuan perkiraan (maks ~100 pips), tentukan titik SL manual sesuai struktur di chart"
+    ]
     if dist_pips >= 200.0:
         waspada_list.append(
-            f"jarak zona masih cukup jauh ({round(dist_pips)} pips), pantau reaksi candle saat harga tiba agar tidak tertembus momentum berita"
+            f"jarak zona masih cukup jauh ({round(dist_pips)} pips), pantau reaksi candle saat harga tiba"
         )
     if "SIDEWAYS" in htf_trend:
-        waspada_list.append(f"tren utama {trend_tf} masih Sideways (momentum belum searah penuh)")
+        waspada_list.append(f"tren utama {trend_tf} masih Sideways")
     elif (is_demand and "BEARISH" in htf_trend) or (not is_demand and "BULLISH" in htf_trend):
-        waspada_list.append(f"posisi melawan tren {trend_tf} ({htf_trend}) — wajib disiplin SL")
+        waspada_list.append(f"posisi melawan tren {trend_tf} ({htf_trend})")
 
     if zone["status"] == "MITIGATED_1X":
         waspada_list.append(
-            f"area sudah tersentuh 1x (penetrasi {zone['penetration_pct']}%), rawan sapuan ekor"
+            f"area sudah tersentuh 1x (penetrasi {zone['penetration_pct']}%)"
         )
 
     waspada_list.append(
-        f"amankan sebagian profit di TP 1 ({tp1[1]:.2f}) sebelum harga menyentuh {tp2[0]} di {tp2[1]:.2f}"
+        f"amankan sebagian profit di TP 1 ({tp1[1]:.2f}) sebelum menyentuh {tp2[0]} di {tp2[1]:.2f}"
     )
     waspadai = "; ".join(waspada_list)
     waspadai = waspadai[0].upper() + waspadai[1:] + "."
@@ -768,7 +748,7 @@ def run_full_analysis(mode: str) -> str:
             tf_summaries,
             min_dist_pips=profile.get("zone_scan_min_pips", profile.get("min_dist_pips", MIN_DIST_PIPS)),
             max_dist_pips=scan_max_pips,
-            max_sl_pips=profile["max_sl_pips"],
+            max_sl_pips=float(profile.get("max_sl_pips", DEFAULT_REF_SL_PIPS)),
             nearest_reject=nearest_reject,
         )
 
