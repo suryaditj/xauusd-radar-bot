@@ -97,6 +97,7 @@ def format_no_zone_message(
     min_dist_pips: float = 15.0,
     max_dist_pips: float = 200.0,
     max_sl_pips: float = 90.0,
+    nearest_reject: dict | None = None,
 ) -> str:
     trend_lines = []
     for tf in tf_order:
@@ -105,6 +106,17 @@ def format_no_zone_message(
         trend_lines.append(f"• {tf:<3} : {info['trend']} | {info['bos']}{extra}")
 
     dist_range_str = f"{int(min_dist_pips)}-{int(max_dist_pips)} pips"
+    alasan_text = (
+        f"Belum ada zona Supply/Demand/FVG segar dalam koridor {dist_range_str} "
+        f"dengan batas SL maks {int(max_sl_pips)} pips."
+    )
+    if nearest_reject is not None:
+        alasan_text += (
+            f" Zona terdekat: {nearest_reject['type']} {nearest_reject['pattern']} "
+            f"({nearest_reject['tf']}) @ {nearest_reject['proximal']:.2f} "
+            f"[{nearest_reject['dist_pips']:.0f} pips] — {nearest_reject['reason']}."
+        )
+
     lines = [
         "⚪ XAUUSD — MULTI-TF RADAR & ZONA",
         f"Mode : {mode} ({' → '.join(tf_order)})",
@@ -116,7 +128,7 @@ def format_no_zone_message(
         f"🔎 Sumber Zona Aktif : Tidak ditemukan ({' / '.join(tf_order)})",
         "📢 STATUS : ⚪ WAIT — BELUM ADA ZONA VALID",
         "",
-        f"💡 Alasan Entry : Belum ada zona Supply/Demand/FVG segar dalam koridor {dist_range_str} dengan batas SL maks {int(max_sl_pips)} pips.",
+        f"💡 Alasan Entry : {_clean_inline_text(alasan_text)}",
         "",
         "⚠️ Waspadai : Jangan memaksakan entry di tengah area tanpa struktur; tunggu pembentukan base dan leg-out baru.",
         "",
