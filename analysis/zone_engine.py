@@ -310,6 +310,80 @@ def detect_snd_zones(
     return zones
 
 
+def detect_reversal_zones(
+    window: pd.DataFrame,
+    tf_name: str,
+    snr_levels: list[dict],
+    fvg_zones: list[dict],
+    body_atr_min: float = 1.2,
+    body_ratio_min: float = 0.55,
+) -> list[dict]:
+    """Zona pola V (candle kuat berlawanan arah tanpa base), mis. naik besar lalu turun besar."""
+    closed_len = len(window) - 1
+    if closed_len < 15:
+        return []
+
+    out: list[dict] = []
+    for idx in range(1, closed_len):
+        prev = window.iloc[idx - 1]
+        curr = window.iloc[idx]
+
+        if not (
+            float(curr["body"]) >= body_atr_min * float(curr["atr"])
+            and float(curr["body_ratio"]) >= body_ratio_min
+        ):
+            continue
+
+        prev_bull = float(prev["close"]) > float(prev["open"])
+        curr_bull = float(curr["close"]) > float(curr["open"])
+        if prev_bull == curr_bull or float(prev["body"]) <= 0:
+            continue
+
+        if curr_bull:
+            zone_type = "DEMAND"
+            proximal = max(float(prev["open"]), float(prev["close"]))
+            distal = min(float(prev["low"]), float(curr["low"]))
+        else:
+            zone_type = "SUPPLY"
+            proximal = min(float(prev["open"]), float(prev["close"]))
+            distal = max(float(prev["high"]), float(curr["high"]))
+
+        proximal = round(proximal, 2)
+        distal = round(distal, 2)
+
+        mitigation_info = evaluate_zone_mitigation(window.iloc[idx + 1 :], zone_type, proximal, distal)
+        if mitigation_info["status"] in ("BROKEN", "EXHAUSTED"):
+            continue
+
+        has_snr, snr_price = _check_snr_confluence(zone_type, proximal, distal, snr_levels)
+
+        pad = 15.0 * PIP_SIZE
+        z_low = min(proximal, distal) - pad
+        z_high = max(proximal, distal) + pad
+        has_fvg = any(
+            f["type"] == zone_type
+            and not (max(f["proximal"], f["distal"]) < z_low or min(f["proximal"], f["distal"]) > z_high)
+            for f in fvg_zones
+        )
+
+        out.append({
+            "tf": tf_name,
+            "kind": "SND",
+            "type": zone_type,
+            "pattern": "V-REV",
+            "status": mitigation_info["status"],
+            "touches": mitigation_info["touch_count"],
+            "penetration_pct": mitigation_info["max_penetration_pct"],
+            "proximal": proximal,
+            "distal": distal,
+            "has_snr_confluence": has_snr,
+            "snr_price": snr_price,
+            "has_fvg_confluence": has_fvg,
+        })
+
+    return out
+
+
 def analyze_tf_context(window: pd.DataFrame, active_fvgs: list[dict]) -> dict:
     last_close = float(window["close"].iloc[-2])
     ema50 = float(window["ema50"].iloc[-2])
@@ -449,6 +523,13 @@ def evaluate_zone_setup(
 
     dist_pips = abs(current_price - proximal) / PIP_SIZE
     if dist_pips > max_dist_pips:
+        if rejected_out is not None:
+            _record_rejection(
+                rejected_out,
+                zone,
+                current_price,
+                f"jarak {dist_pips:.0f} pips > max {int(max_dist_pips)} pips",
+            )
         return None
 
     is_counter_trend = (
@@ -685,11 +766,12 @@ def run_full_analysis(mode: str) -> str:
         snr_levels = detect_snr_levels(win)
         fvg_zones = detect_unbroken_fvgs(win, tf, snr_levels)
         snd_zones = detect_snd_zones(win, tf, snr_levels, fvg_zones)
+        rev_zones = detect_reversal_zones(win, tf, snr_levels, fvg_zones)
 
         tf_summaries[tf] = analyze_tf_context(win, fvg_zones)
 
         if tf in zone_tf_set:
-            for z in (*snd_zones, *fvg_zones):
+            for z in (*snd_zones, *rev_zones, *fvg_zones):
                 dist_pips = abs(current_price - z["proximal"]) / PIP_SIZE
                 if dist_pips <= scan_max_pips:
                     mode_zones.append(z)
