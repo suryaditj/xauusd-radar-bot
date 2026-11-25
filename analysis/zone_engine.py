@@ -218,6 +218,10 @@ def detect_snd_zones(
     snr_levels: list[dict],
     fvg_zones: list[dict],
     max_base_candles: int = 3,
+    base_body_ratio_max: float = 0.60,
+    base_range_atr_max: float = 1.5,
+    leg_out_body_atr_min: float = 1.2,
+    leg_out_body_ratio_min: float = 0.55,
 ) -> list[dict]:
     closed_len = len(window) - 1
     if closed_len < 15:
@@ -238,15 +242,15 @@ def detect_snd_zones(
             leg_in = window.iloc[i - 1]
 
             is_valid_base = (
-                (base_slice["body_ratio"] <= 0.45).all()
-                and (base_slice["range"] <= 1.2 * base_slice["atr"]).all()
+                (base_slice["body_ratio"] <= base_body_ratio_max).all()
+                and (base_slice["range"] <= base_range_atr_max * base_slice["atr"]).all()
             )
             if not is_valid_base:
                 continue
 
             is_strong_leg_out = (
-                float(leg_out["body"]) >= 1.5 * float(leg_out["atr"])
-                and float(leg_out["body_ratio"]) >= 0.60
+                float(leg_out["body"]) >= leg_out_body_atr_min * float(leg_out["atr"])
+                and float(leg_out["body_ratio"]) >= leg_out_body_ratio_min
             )
             if not is_strong_leg_out:
                 continue
@@ -479,7 +483,7 @@ def evaluate_zone_setup(
             return None
         if zone_type == "SUPPLY" and proximal <= current_price:
             if rejected_out is not None:
-                _record_rejection(rejected_out, zone, current_price, "Supply di bawah harga jalan")
+                _record_rejection(rejected_out, zone, current_price, "Supply sudah dilewati harga")
             return None
 
         if dist_pips < min_dist_pips:
@@ -494,7 +498,6 @@ def evaluate_zone_setup(
 
         limit_price = round((proximal + distal) / 2.0, 2)
 
-    # Angka SL hanya sebagai estimasi acuan (misalnya maks ~100 pips), tidak menggugurkan setup
     buffer_pips = float(profile.get("buffer_pips", 5.0))
     ref_max_sl_pips = float(profile.get("max_sl_pips", DEFAULT_REF_SL_PIPS))
     ref_min_sl_pips = min(float(profile.get("min_sl_pips", 30.0)), ref_max_sl_pips)
