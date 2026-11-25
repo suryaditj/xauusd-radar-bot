@@ -6,11 +6,11 @@ WIB = timezone(timedelta(hours=7))
 LINE = "━━━━━━━━━━━━━━━━━━"
 
 PATTERN_TEXT = {
-    "RBR": "lanjut naik",
-    "DBR": "berbalik naik",
-    "DBD": "lanjut turun",
-    "RBD": "berbalik turun",
-    "FVG": "celah harga",
+    "RBR": "[RBR] lanjut naik",
+    "DBR": "[DBR] berbalik naik",
+    "DBD": "[DBD] lanjut turun",
+    "RBD": "[RDB] berbalik turun",
+    "FVG": "[FVG] celah harga",
     "V-REV": "pembalikan tajam",
 }
 
@@ -26,18 +26,18 @@ def _get_wib_timestamp() -> str:
 
 def _trend_text(trend: str) -> str:
     if "BULLISH" in trend:
-        return "Naik 🟢"
+        return "Bullish 🟢"
     if "BEARISH" in trend:
-        return "Turun 🔴"
-    return "Datar ⚪"
+        return "Bearish 🔴"
+    return "Sideways ↔️"
 
 
 def _bos_text(bos: str) -> str:
     if "Bullish" in bos:
-        return "tembus ke atas"
+        return "Bullish, tembus ke atas"
     if "Bearish" in bos:
-        return "tembus ke bawah"
-    return "belum ada tembusan"
+        return "Bearish, tembus ke bawah"
+    return "Sideways, belum ada tembusan"
 
 
 def _fvg_text(fvg: str) -> str:
@@ -56,7 +56,7 @@ def _fvg_text(fvg: str) -> str:
 def _trend_lines(tf_order: list[str], tf_summaries: dict) -> list[str]:
     lines = []
     for tf in tf_order:
-        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ⚪", "bos": "", "fvg": ""})
+        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ↔️", "bos": "", "fvg": ""})
         parts = [_trend_text(info["trend"]), _bos_text(info.get("bos", ""))]
         fvg = _fvg_text(info.get("fvg", ""))
         if fvg:
@@ -111,11 +111,11 @@ def format_locked_radar_message(
 
     if is_confirmed:
         icon = "🟢" if is_demand else "🔴"
-        status_text = f"{icon} {'BELI' if is_demand else 'JUAL'} SEKARANG"
+        status_text = f"{icon} {'BUY' if is_demand else 'SELL'}"
         entry_label = "Entry"
     else:
         icon = "🟡"
-        status_text = f"⏳ TUNGGU — pantau {'Buy' if is_demand else 'Sell'} Limit"
+        status_text = f"⏳ WAIT — pantau {'Buy' if is_demand else 'Sell'} Limit"
         entry_label = "Buy Limit" if is_demand else "Sell Limit"
 
     sl_min_pips = round(abs(limit_price - sl_min) / PIP_SIZE)
@@ -131,14 +131,14 @@ def format_locked_radar_message(
         tp_lines.append(f"• TP {n} : {tp[1]:.2f} (+{pips} pips)")
 
     lines = [
-        f"{icon} XAUUSD — RADAR ZONA",
+        f"{icon} XAUUSD — ANALISA ZONA",
         f"⚡ Mode : {mode.title()} ({' → '.join(tf_order)})",
         f"💰 Harga sekarang : {current_price:.2f}",
         LINE,
         "🧭 ARAH MARKET",
         *_trend_lines(tf_order, tf_summaries),
         LINE,
-        f"📢 Status : {status_text}",
+        f"📢 SINYAL : {status_text}",
         f"🔎 Zona dari : {active_tf}",
         f"📦 Jenis : {_zone_text(zone)}",
         "",
@@ -174,7 +174,7 @@ def format_no_zone_message(
         f"dari harga untuk mode {mode.title()}."
     )
     if nearest_reject is not None:
-        area = "Area beli" if nearest_reject["type"] == "DEMAND" else "Area jual"
+        area = "Area BUY" if nearest_reject["type"] == "DEMAND" else "Area SELL"
         pola = PATTERN_TEXT.get(nearest_reject["pattern"], nearest_reject["pattern"])
         alasan += (
             f"\nZona terdekat: {area} {pola} ({nearest_reject['tf']}) di "
