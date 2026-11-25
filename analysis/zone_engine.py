@@ -695,50 +695,29 @@ def _build_dynamic_notes(
     tp2: tuple[str, float],
 ) -> tuple[str, str]:
     is_demand = zone["type"] == "DEMAND"
-    arah_teks = "pantulan naik" if is_demand else "pantulan turun"
+    area = "beli" if is_demand else "jual"
     htf_trend = tf_summaries.get(trend_tf, {}).get("trend", "SIDEWAYS ⚪")
-    active_info = tf_summaries.get(active_tf, {})
 
-    if zone["kind"] == "FVG":
-        base_desc = f"FVG {zone['type']} unbroken ({zone['status']}) di {active_tf}"
-    else:
-        base_desc = f"zona {zone['type']} {zone['pattern']} ({zone['status']}) di {active_tf}"
-
-    alasan_parts = [base_desc]
-
+    aksi = "memantul naik" if is_demand else "berbalik turun"
+    alasan = f"Harga diperkirakan {aksi} saat menyentuh area {area} di {active_tf}."
     if zone.get("has_snr_confluence") and zone.get("snr_price") is not None:
-        alasan_parts.append(f"berimpit dengan SNR di {zone['snr_price']:.2f} (konfluensi kuat)")
+        alasan += f" Area ini juga bertepatan dengan level penting di {zone['snr_price']:.2f}, jadi lebih kuat."
     if zone["kind"] == "SND" and zone.get("has_fvg_confluence"):
-        alasan_parts.append("didukung FVG unbroken")
-    if active_info.get("bos", "").startswith("BOS "):
-        alasan_parts.append(f"terkonfirmasi {active_info['bos']}")
+        alasan += " Ada celah harga yang belum terisi di sekitarnya, menambah kekuatan."
 
-    alasan_entry = f"Menunggu {arah_teks} pada {', '.join(alasan_parts)}."
-
-    waspada_list = [
-        "angka SL hanya acuan perkiraan (maks ~100 pips), tentukan titik SL manual sesuai struktur di chart"
-    ]
+    waspada = ["Titik SL hanya acuan, sesuaikan sendiri dengan chart."]
     if dist_pips >= 200.0:
-        waspada_list.append(
-            f"jarak zona masih cukup jauh ({round(dist_pips)} pips), pantau reaksi candle saat harga tiba"
-        )
+        waspada.append(f"Zona masih jauh ({round(dist_pips)} pips), tunggu harga mendekat.")
     if "SIDEWAYS" in htf_trend:
-        waspada_list.append(f"tren utama {trend_tf} masih Sideways")
+        waspada.append(f"Arah besar {trend_tf} masih datar, harga bisa bolak-balik.")
     elif (is_demand and "BEARISH" in htf_trend) or (not is_demand and "BULLISH" in htf_trend):
-        waspada_list.append(f"posisi melawan tren {trend_tf} ({htf_trend})")
-
+        arah = "turun" if "BEARISH" in htf_trend else "naik"
+        waspada.append(f"Berlawanan dengan arah {trend_tf} yang sedang {arah}, hati-hati.")
     if zone["status"] == "MITIGATED_1X":
-        waspada_list.append(
-            f"area sudah tersentuh 1x (penetrasi {zone['penetration_pct']}%)"
-        )
+        waspada.append("Area ini sudah pernah disentuh sekali, kekuatannya bisa berkurang.")
+    waspada.append(f"Amankan sebagian profit di TP 1 ({tp1[1]:.2f}).")
 
-    waspada_list.append(
-        f"amankan sebagian profit di TP 1 ({tp1[1]:.2f}) sebelum menyentuh {tp2[0]} di {tp2[1]:.2f}"
-    )
-    waspadai = "; ".join(waspada_list)
-    waspadai = waspadai[0].upper() + waspadai[1:] + "."
-
-    return alasan_entry, waspadai
+    return alasan, "\n".join(waspada)
 
 
 def run_full_analysis(mode: str) -> str:
