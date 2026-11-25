@@ -24,8 +24,6 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 def _prepare_window(df: pd.DataFrame, tf_name: str) -> pd.DataFrame:
     data = df.copy().reset_index(drop=True)
-    data["ema50"] = data["close"].ewm(span=50, adjust=False).mean()
-    data["ema200"] = data["close"].ewm(span=200, adjust=False).mean()
     data["atr"] = calculate_atr(data, 14)
     data["range"] = data["high"] - data["low"]
     data["body"] = (data["close"] - data["open"]).abs()
@@ -384,17 +382,38 @@ def detect_reversal_zones(
     return out
 
 
+def _structure_trend(window: pd.DataFrame, last_close: float, span: int = 2) -> str:
+    closed_len = len(window) - 1
+    highs: list[float] = []
+    lows: list[float] = []
+    for idx in range(span, closed_len - span):
+        hi = float(window["high"].iloc[idx])
+        lo = float(window["low"].iloc[idx])
+        left = window.iloc[idx - span : idx]
+        right = window.iloc[idx + 1 : idx + span + 1]
+        if hi > float(left["high"].max()) and hi >= float(right["high"].max()):
+            highs.append(hi)
+        if lo < float(left["low"].min()) and lo <= float(right["low"].min()):
+            lows.append(lo)
+
+    if len(highs) < 2 or len(lows) < 2:
+        return "SIDEWAYS ⚪"
+
+    if last_close < lows[-1]:
+        return "BEARISH 🔴"
+    if last_close > highs[-1]:
+        return "BULLISH 🟢"
+
+    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
+        return "BULLISH 🟢"
+    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
+        return "BEARISH 🔴"
+    return "SIDEWAYS ⚪"
+
+
 def analyze_tf_context(window: pd.DataFrame, active_fvgs: list[dict]) -> dict:
     last_close = float(window["close"].iloc[-2])
-    ema50 = float(window["ema50"].iloc[-2])
-    ema200 = float(window["ema200"].iloc[-2])
-
-    if last_close > ema50 > ema200:
-        trend = "BULLISH 🟢"
-    elif last_close < ema50 < ema200:
-        trend = "BEARISH 🔴"
-    else:
-        trend = "SIDEWAYS ⚪"
+    trend = _structure_trend(window, last_close)
 
     recent_high = float(window["high"].iloc[-17:-2].max())
     recent_low = float(window["low"].iloc[-17:-2].min())
