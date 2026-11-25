@@ -72,7 +72,7 @@ def format_locked_radar_message(
         f"📦 Pola   : {zone['type']} {zone['pattern']} ({zone['status']})",
         "",
         f"📍 {entry_label} : {limit_price:.2f}",
-        f"🛡 SL         : {sl_min:.2f} - {sl_max:.2f} ({sl_min_pips} - {sl_max_pips} pips)",
+        f"🛡 SL         : {sl_min:.2f} - {sl_max:.2f} ({sl_min_pips} - {sl_max_pips} pips) [acuan]",
         "",
         "🎯 Target Profit",
         f"• TP 1 {tp1_tag:<16}: {tp1[1]:.2f} (+{tp1_pips} pips)",
@@ -96,7 +96,7 @@ def format_no_zone_message(
     tf_summaries: dict,
     min_dist_pips: float = 15.0,
     max_dist_pips: float = 200.0,
-    max_sl_pips: float = 90.0,
+    max_sl_pips: float = 100.0,
     nearest_reject: dict | None = None,
 ) -> str:
     trend_lines = []
@@ -108,7 +108,7 @@ def format_no_zone_message(
     dist_range_str = f"{int(min_dist_pips)}-{int(max_dist_pips)} pips"
     alasan_text = (
         f"Belum ada zona Supply/Demand/FVG segar dalam koridor {dist_range_str} "
-        f"dengan batas SL maks {int(max_sl_pips)} pips."
+        f"untuk mode {mode}."
     )
     if nearest_reject is not None:
         alasan_text += (
@@ -118,7 +118,7 @@ def format_no_zone_message(
         )
 
     lines = [
-        "⚪ XAUUSD — MULTI-TF RADAR & ZONA",
+        "🪙 XAUUSD — MULTI-TF RADAR & ZONA",
         f"Mode : {mode} ({' → '.join(tf_order)})",
         f"Harga Saat Ini : {current_price:.2f}",
         "",
@@ -126,11 +126,11 @@ def format_no_zone_message(
         *trend_lines,
         "",
         f"🔎 Sumber Zona Aktif : Tidak ditemukan ({' / '.join(tf_order)})",
-        "📢 STATUS : ⚪ WAIT — BELUM ADA ZONA VALID",
+        "📢 STATUS : 🟡 WAIT — BELUM ADA ZONA VALID",
         "",
         f"💡 Alasan Entry : {_clean_inline_text(alasan_text)}",
         "",
-        "⚠️ Waspadai : Jangan memaksakan entry di tengah area tanpa struktur; tunggu pembentukan base dan leg-out baru.",
+        "⚠️ Waspadai : Jangan memaksakan entry di tengah area tanpa struktur, tunggu pembentukan base dan leg-out baru.",
         "",
         f"🕒 Update : {_get_wib_timestamp()}",
     ]
