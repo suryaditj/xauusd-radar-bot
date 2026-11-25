@@ -1,15 +1,93 @@
+import re
 from datetime import datetime, timezone, timedelta
 from config.settings import PIP_SIZE
 
 WIB = timezone(timedelta(hours=7))
+LINE = "━━━━━━━━━━━━━━━━━━"
 
+PATTERN_TEXT = {
+    "RBR": "lanjut naik",
+    "DBR": "berbalik naik",
+    "DBD": "lanjut turun",
+    "RBD": "berbalik turun",
+    "FVG": "celah harga",
+    "V-REV": "pembalikan tajam",
+}
 
-def _clean_inline_text(text: str) -> str:
-    return " ".join(str(text).split())
+STATUS_TEXT = {
+    "FRESH": "belum pernah disentuh",
+    "MITIGATED_1X": "sudah disentuh 1x",
+}
 
 
 def _get_wib_timestamp() -> str:
     return datetime.now(WIB).strftime("%H:%M:%S WIB")
+
+
+def _trend_text(trend: str) -> str:
+    if "BULLISH" in trend:
+        return "Naik 🟢"
+    if "BEARISH" in trend:
+        return "Turun 🔴"
+    return "Datar ⚪"
+
+
+def _bos_text(bos: str) -> str:
+    if "Bullish" in bos:
+        return "tembus ke atas"
+    if "Bearish" in bos:
+        return "tembus ke bawah"
+    return "belum ada tembusan"
+
+
+def _fvg_text(fvg: str) -> str:
+    if not fvg:
+        return ""
+    nums = re.findall(r"\d+", fvg)
+    if fvg.startswith("FVG Aktif") and len(nums) >= 2:
+        return f"celah harga naik {nums[0]} / turun {nums[1]}"
+    if fvg.startswith("Bullish") and nums:
+        return f"celah harga naik ({nums[0]})"
+    if fvg.startswith("Bearish") and nums:
+        return f"celah harga turun ({nums[0]})"
+    return ""
+
+
+def _trend_lines(tf_order: list[str], tf_summaries: dict) -> list[str]:
+    lines = []
+    for tf in tf_order:
+        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ⚪", "bos": "", "fvg": ""})
+        parts = [_trend_text(info["trend"]), _bos_text(info.get("bos", ""))]
+        fvg = _fvg_text(info.get("fvg", ""))
+        if fvg:
+            parts.append(fvg)
+        lines.append(f"• {tf:<3} : {parts[0]}  ({', '.join(parts[1:])})")
+    return lines
+
+
+def _zone_text(zone: dict) -> str:
+    area = "Area beli" if zone["type"] == "DEMAND" else "Area jual"
+    pola = PATTERN_TEXT.get(zone["pattern"], zone["pattern"])
+    status = STATUS_TEXT.get(zone["status"], zone["status"])
+    return f"{area}, {pola} ({status})"
+
+
+def _simple_reason(reason: str) -> str:
+    if reason.startswith("jarak") and ">" in reason:
+        return "terlalu jauh dari harga"
+    if reason.startswith("jarak") and "<" in reason:
+        return "terlalu dekat dengan harga"
+    if reason.startswith("Demand di atas"):
+        return "area beli sudah ada di atas harga"
+    if reason.startswith("Supply sudah"):
+        return "area jual sudah dilewati harga"
+    if reason.startswith("lawan tren"):
+        return "melawan arah tren"
+    return reason
+
+
+def _bullets(text: str) -> list[str]:
+    return [f"• {item.strip()}" for item in str(text).split("\n") if item.strip()]
 
 
 def format_locked_radar_message(
@@ -32,60 +110,52 @@ def format_locked_radar_message(
     is_demand = zone["type"] == "DEMAND"
 
     if is_confirmed:
-        header_icon = "🟢" if is_demand else "🔴"
-        side_label = "BUY" if is_demand else "SELL"
-        status_text = f"{header_icon} SINYAL : {side_label}"
-        entry_label = "Entry Area"
+        icon = "🟢" if is_demand else "🔴"
+        status_text = f"{icon} {'BELI' if is_demand else 'JUAL'} SEKARANG"
+        entry_label = "Entry"
     else:
-        header_icon = "🟡"
-        side_label = "BUY LIMIT" if is_demand else "SELL LIMIT"
-        status_text = f"⏳ WAIT — PANTAU {side_label}"
-        entry_label = "Buy Limit " if is_demand else "Sell Limit"
+        icon = "🟡"
+        status_text = f"⏳ TUNGGU — pantau {'Buy' if is_demand else 'Sell'} Limit"
+        entry_label = "Buy Limit" if is_demand else "Sell Limit"
 
     sl_min_pips = round(abs(limit_price - sl_min) / PIP_SIZE)
     sl_max_pips = round(abs(limit_price - sl_max) / PIP_SIZE)
+    if round(sl_min, 2) == round(sl_max, 2):
+        sl_text = f"{sl_min:.2f} ({sl_min_pips} pips)"
+    else:
+        sl_text = f"{sl_min:.2f} - {sl_max:.2f} ({sl_min_pips}-{sl_max_pips} pips)"
 
-    tp1_pips = round(abs(tp1[1] - limit_price) / PIP_SIZE)
-    tp2_pips = round(abs(tp2[1] - limit_price) / PIP_SIZE)
-    tp3_pips = round(abs(tp3[1] - limit_price) / PIP_SIZE)
-
-    trend_lines = []
-    for tf in tf_order:
-        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ⚪", "bos": "Belum ada BOS", "fvg": ""})
-        extra = f" | {info['fvg']}" if info.get("fvg") else ""
-        trend_lines.append(f"• {tf:<3} : {info['trend']} | {info['bos']}{extra}")
-
-    tp1_tag = f"({tp1[0]})"
-    tp2_tag = f"({tp2[0]})"
-    tp3_tag = f"({tp3[0]})"
+    tp_lines = []
+    for n, tp in enumerate((tp1, tp2, tp3), start=1):
+        pips = round(abs(tp[1] - limit_price) / PIP_SIZE)
+        tp_lines.append(f"• TP {n} : {tp[1]:.2f} (+{pips} pips)")
 
     lines = [
-        f"{header_icon} XAUUSD — MULTI-TF RADAR & ZONA",
-        f"Mode : {mode} ({' → '.join(tf_order)})",
-        f"Harga Saat Ini : {current_price:.2f}",
-        "",
-        "🧭 Peta Kondisi Market (Info Tren)",
-        *trend_lines,
-        "",
-        f"🔎 Sumber Zona Aktif : TF {active_tf}",
-        f"📢 STATUS : {status_text}",
-        f"📦 Pola   : {zone['type']} {zone['pattern']} ({zone['status']})",
+        f"{icon} XAUUSD — RADAR ZONA",
+        f"⚡ Mode : {mode.title()} ({' → '.join(tf_order)})",
+        f"💰 Harga sekarang : {current_price:.2f}",
+        LINE,
+        "🧭 ARAH MARKET",
+        *_trend_lines(tf_order, tf_summaries),
+        LINE,
+        f"📢 Status : {status_text}",
+        f"🔎 Zona dari : {active_tf}",
+        f"📦 Jenis : {_zone_text(zone)}",
         "",
         f"📍 {entry_label} : {limit_price:.2f}",
-        f"🛡 SL         : {sl_min:.2f} - {sl_max:.2f} ({sl_min_pips} - {sl_max_pips} pips) [acuan]",
+        f"🛡 SL : {sl_text}",
         "",
-        "🎯 Target Profit",
-        f"• TP 1 {tp1_tag:<16}: {tp1[1]:.2f} (+{tp1_pips} pips)",
-        f"• TP 2 {tp2_tag:<16}: {tp2[1]:.2f} (+{tp2_pips} pips)",
-        f"• TP 3 {tp3_tag:<16}: {tp3[1]:.2f} (+{tp3_pips} pips)",
+        "🎯 TARGET PROFIT",
+        *tp_lines,
+        LINE,
+        "💡 ALASAN",
+        str(alasan_entry).strip(),
         "",
-        f"💡 Alasan Entry : {_clean_inline_text(alasan_entry)}",
-        "",
-        f"⚠️ Waspadai : {_clean_inline_text(waspadai)}",
-        "",
+        "⚠️ WASPADA",
+        *_bullets(waspadai),
+        LINE,
         f"🕒 Update : {_get_wib_timestamp()}",
     ]
-
     return "\n".join(lines)
 
 
@@ -99,40 +169,35 @@ def format_no_zone_message(
     max_sl_pips: float = 100.0,
     nearest_reject: dict | None = None,
 ) -> str:
-    trend_lines = []
-    for tf in tf_order:
-        info = tf_summaries.get(tf, {"trend": "SIDEWAYS ⚪", "bos": "Belum ada BOS", "fvg": ""})
-        extra = f" | {info['fvg']}" if info.get("fvg") else ""
-        trend_lines.append(f"• {tf:<3} : {info['trend']} | {info['bos']}{extra}")
-
-    dist_range_str = f"{int(min_dist_pips)}-{int(max_dist_pips)} pips"
-    alasan_text = (
-        f"Belum ada zona Supply/Demand/FVG segar dalam koridor {dist_range_str} "
-        f"untuk mode {mode}."
+    alasan = (
+        f"Belum ada zona baru yang cocok dalam jarak {int(min_dist_pips)}-{int(max_dist_pips)} pips "
+        f"dari harga untuk mode {mode.title()}."
     )
     if nearest_reject is not None:
-        alasan_text += (
-            f" Zona terdekat: {nearest_reject['type']} {nearest_reject['pattern']} "
-            f"({nearest_reject['tf']}) @ {nearest_reject['proximal']:.2f} "
-            f"[{nearest_reject['dist_pips']:.0f} pips] — {nearest_reject['reason']}."
+        area = "Area beli" if nearest_reject["type"] == "DEMAND" else "Area jual"
+        pola = PATTERN_TEXT.get(nearest_reject["pattern"], nearest_reject["pattern"])
+        alasan += (
+            f"\nZona terdekat: {area} {pola} ({nearest_reject['tf']}) di "
+            f"{nearest_reject['proximal']:.2f}, {nearest_reject['dist_pips']:.0f} pips dari harga. "
+            f"Tidak dipakai karena {_simple_reason(nearest_reject['reason'])}."
         )
 
     lines = [
-        "🪙 XAUUSD — MULTI-TF RADAR & ZONA",
-        f"Mode : {mode} ({' → '.join(tf_order)})",
-        f"Harga Saat Ini : {current_price:.2f}",
+        "🪙 XAUUSD — RADAR ZONA",
+        f"⚡ Mode : {mode.title()} ({' → '.join(tf_order)})",
+        f"💰 Harga sekarang : {current_price:.2f}",
+        LINE,
+        "🧭 ARAH MARKET",
+        *_trend_lines(tf_order, tf_summaries),
+        LINE,
+        "📢 Status : 🟡 TUNGGU — belum ada zona yang cocok",
         "",
-        "🧭 Peta Kondisi Market (Info Tren)",
-        *trend_lines,
+        "💡 ALASAN",
+        alasan,
         "",
-        f"🔎 Sumber Zona Aktif : Tidak ditemukan ({' / '.join(tf_order)})",
-        "📢 STATUS : 🟡 WAIT — BELUM ADA ZONA VALID",
-        "",
-        f"💡 Alasan Entry : {_clean_inline_text(alasan_text)}",
-        "",
-        "⚠️ Waspadai : Jangan memaksakan entry di tengah area tanpa struktur, tunggu pembentukan base dan leg-out baru.",
-        "",
+        "⚠️ WASPADA",
+        "• Jangan entry di tengah area tanpa struktur, tunggu zona baru terbentuk.",
+        LINE,
         f"🕒 Update : {_get_wib_timestamp()}",
     ]
-
     return "\n".join(lines)
