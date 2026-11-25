@@ -496,10 +496,7 @@ def evaluate_zone_setup(
                 )
             return None
 
-        if is_quick_scalp:
-            limit_price = round((proximal * 0.75) + (distal * 0.25), 2)
-        else:
-            limit_price = round((proximal + distal) / 2.0, 2)
+        limit_price = round((proximal + distal) / 2.0, 2)
 
     buffer_pips = profile["buffer_pips"]
     direction = 1 if zone_type == "DEMAND" else -1
@@ -692,6 +689,7 @@ def run_full_analysis(mode: str) -> str:
     mode_label = profile.get("label", mode_key).upper()
     tf_order = profile["timeframes"]
     ttl_seconds = profile.get("cache_ttl", 45)
+    is_quick_scalp = profile.get("is_quick_scalp", False)
 
     dataset = fetch_mode_dataset(tf_order, ttl_seconds=ttl_seconds)
     windows: dict[str, pd.DataFrame] = {}
@@ -736,14 +734,24 @@ def run_full_analysis(mode: str) -> str:
                 valid_candidates.append(evaluated)
 
         if valid_candidates:
-            valid_candidates.sort(
-                key=lambda item: (
-                    not item["is_confirmed"],
-                    -item["confluence_score"],
-                    item["zone"]["status"] != "FRESH",
-                    item["dist_pips"],
+            if is_quick_scalp:
+                valid_candidates.sort(
+                    key=lambda item: (
+                        not item["is_confirmed"],
+                        item["dist_pips"],
+                        -item["confluence_score"],
+                        item["zone"]["status"] != "FRESH",
+                    )
                 )
-            )
+            else:
+                valid_candidates.sort(
+                    key=lambda item: (
+                        not item["is_confirmed"],
+                        -item["confluence_score"],
+                        item["zone"]["status"] != "FRESH",
+                        item["dist_pips"],
+                    )
+                )
             selected_setup = valid_candidates[0]
             selected_tf = tf
             break
